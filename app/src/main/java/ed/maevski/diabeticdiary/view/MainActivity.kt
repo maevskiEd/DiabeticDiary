@@ -1,7 +1,8 @@
-package ed.maevski.diabeticdiary
+package ed.maevski.diabeticdiary.view
 
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
+import ed.maevski.diabeticdiary.R
 
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
