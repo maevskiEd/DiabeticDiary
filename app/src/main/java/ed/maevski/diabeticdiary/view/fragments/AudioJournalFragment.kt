@@ -1,36 +1,41 @@
 package ed.maevski.diabeticdiary.view.fragments
 
 import android.Manifest
+import android.annotation.SuppressLint
+import android.content.ContentValues
 import android.content.pm.PackageManager
+import android.media.AudioFormat
+import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.provider.MediaStore
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
-import androidx.annotation.RequiresApi
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import ed.maevski.diabeticdiary.R
+import ed.maevski.diabeticdiary.data.entity.Audiofile
 import ed.maevski.diabeticdiary.databinding.FragmentAudioJournalBinding
+import ed.maevski.diabeticdiary.view.rv_adapters.AudioJournalRecyclerAdapter
+import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
+import java.io.OutputStream
 
 class AudioJournalFragment : Fragment() {
     private var _binding: FragmentAudioJournalBinding? = null
     private val binding get() = _binding!!
 
-    private var mediaRecorder: MediaRecorder? = null
+    val TAG = "myLogs"
 
-    //Флаг для состояния: ведется запись с микрофона или нет
-    private var isRecording = false
-
-    //Добавляю этот флаг для того, чтобы при загрузке запросить разрешение на запись аудио,
-    //чтобы инициализировать MediaRecorder и можно было задать источник микрофон
-    //Если пользователь откажется разрешать запись, то еще раз запросим разрешение при нажатии кнопки с микрофоном
-    private var isPermission = false
+    var myBufferSize = 8192
+    var audioRecord: AudioRecord? = null
+    var isReading = false
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -43,130 +48,239 @@ class AudioJournalFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            context?.let { MediaRecorder(it) }
-        } else {
-            @Suppress("DEPRECATION")
-            MediaRecorder()
-        }
+        //Получаем список при транзакции фрагмента
+        val adapter = AudioJournalRecyclerAdapter()
 
-        println("mediaRecorder: $mediaRecorder")
+        adapter.items = fetchAudioFiles()
+        binding.audioJournalRecycler.adapter = adapter
 
         //Проверяем разрешение на запись аудио, на запись файла и запрашываем разршение у пользователя
-        if (checkAndRequestPermissions()) {
-            println("Есть все разрешения")
-            isPermission = true
-            initOutputAudio()
-        }
-
-                if (checkPermission()) {
-                    isPermission = true
-                    initOutputAudio()
-                }
+        if (checkAndRequestPermissions()) createAudioRecorder()
 
         binding.fabVoice.setOnClickListener {
-            if (isRecording) {
+            if (isReading) {
                 // Остановка записи
-                println("Остановка записи")
+                Log.d(TAG, "Остановка записи")
+
                 recordStop()
             } else {
                 // Начало записи
 
-                //Проверяем есть ли разрешение на запись аудио с микрофона и на запись файла
+                //Еще раз проверяем разрешения. Вдруг пользователь при открытии фрагмента не предоставил все разрешения.
                 if (!checkAndRequestPermissions()) {
-                    //Если нет, то запрашиваем и выходим из метода
-                    println("Если нет, то запрашиваем и выходим из метода")
-                    //requestPermission()
+                    //Если нет, то выходим из слушателя
+                    Log.d(TAG, "Если нет, то запрашиваем и выходим из метода")
                     return@setOnClickListener
-                } else {
-                    if (!isPermission) {
-                        initOutputAudio()
-                    }
                 }
 
-                println("Начало записи")
+                Log.d(TAG, "Начинаем запись звука")
                 recordStart()
             }
         }
     }
 
-    private fun initOutputAudio() {
-        //Устанавливаем источник звука, формат и кодек
-        println("Устанавливаем источник звука, формат и кодек")
-        mediaRecorder?.setAudioSource(MediaRecorder.AudioSource.MIC)
-        mediaRecorder?.setOutputFormat(MediaRecorder.OutputFormat.OGG)
-        mediaRecorder?.setAudioEncoder(MediaRecorder.AudioEncoder.OPUS)
+    fun fetchAudioFiles(): List<Audiofile>? {
+        val documentsDirectory =
+            Environment.getExternalStoragePublicDirectory("${Environment.DIRECTORY_DOCUMENTS}/ddiary")
+
+        val audioFiles = documentsDirectory.listFiles { file -> file.isFile  && file.name.endsWith(".raw")}
+
+        Log.d(TAG, "audioFiles: ${audioFiles?.joinToString()}")
+        Log.d(TAG, "audioFiles.size: ${audioFiles?.size}")
+
+        val audioFileList = audioFiles?.map { file ->
+            Audiofile(file.name, file.absolutePath)
+        }
+
+        Log.d(TAG, "audioFileList: ${audioFileList?.joinToString()}")
+
+        return audioFileList
     }
 
-    private fun checkPermission(): Boolean {
-        val result = ContextCompat.checkSelfPermission(
-            requireContext(),
-            Manifest.permission.RECORD_AUDIO
-        )
-        println("checkPermission:  RECORD_AUDIO result = $result")
+    /*    fun fetchAudioFilesFromMediaStore(context: Context): List<Audiofile>{
+            val audiofiles = mutableListOf<Audiofile>()
 
-        return result == PackageManager.PERMISSION_GRANTED
-    }
+            val resolver = requireContext().contentResolver
+            val projection = arrayOf(
+                _ID,
+                TITLE,
+                DATA
+            )
 
-    private fun requestPermission() {
-        ActivityCompat.requestPermissions(
-            requireActivity(),
-            arrayOf(Manifest.permission.RECORD_AUDIO),
-            1
+            val selection = "$DATA like ?"
+            val selectionArgs = arrayOf("%${Environment.DIRECTORY_DOCUMENTS}%")
+
+            val sortOrder = "$TITLE ASC"
+
+            val queryUri = EXTERNAL_CONTENT_URI
+
+            resolver.query(queryUri, projection, selection, selectionArgs, sortOrder)?.use { cursor ->
+                val idColumn = cursor.getColumnIndexOrThrow(_ID)
+                val titleColumn = cursor.getColumnIndexOrThrow(TITLE)
+                val dataColumn = cursor.getColumnIndexOrThrow(DATA)
+
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(idColumn)
+                    val title = cursor.getString(titleColumn)
+                    val data = cursor.getString(dataColumn)
+
+                    val file = File(data)
+                    if (file.exists()) {
+                        audiofiles.add(Audiofile(id, title, data))
+                    } else {
+                        Log.d("AudioJournalAdapter", "File not found: $data")
+                    }
+                }
+            }
+
+            return audiofiles
+        }*/
+
+    @SuppressLint("MissingPermission")
+    fun createAudioRecorder() {
+        Log.d(TAG, "Функция: createAudioRecorder()")
+
+        val sampleRate = 8000
+        val channelConfig = AudioFormat.CHANNEL_IN_MONO
+        val audioFormat = AudioFormat.ENCODING_PCM_16BIT
+        val minInternalBufferSize = AudioRecord.getMinBufferSize(
+            sampleRate,
+            channelConfig, audioFormat
         )
+        val internalBufferSize = minInternalBufferSize * 4
+        Log.d(
+            TAG, "minInternalBufferSize = " + minInternalBufferSize
+                    + ", internalBufferSize = " + internalBufferSize
+                    + ", myBufferSize = " + myBufferSize
+        )
+
+        audioRecord = AudioRecord.Builder()
+            .setAudioSource(MediaRecorder.AudioSource.MIC)
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(48000)
+                    .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                    .build()
+            )
+            .setBufferSizeInBytes(internalBufferSize)
+            .build()
     }
 
     private fun recordStart(): Boolean {
+        Log.d(TAG, "record start")
+
         //Проверяем наличие микрофона в системе
         return if (context?.packageManager?.hasSystemFeature(PackageManager.FEATURE_MICROPHONE) == true) {
-//            val output = Environment.getExternalStorageDirectory().absolutePath + "/ddiary/${System.currentTimeMillis()}_rec.3gp"
+            Log.d(TAG, "микрофон есть в системе.")
 
-            println("микрофон есть в системе.")
+            Thread(Runnable {
+                if (audioRecord == null) return@Runnable
+                val myBuffer = ByteArray(myBufferSize)
+                var readCount = 0
+                var totalCount = 0
 
-            val output =
-                Environment.getExternalStorageDirectory().absolutePath + "/${System.currentTimeMillis()}_ddiary.3gp"
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val values = ContentValues().apply {
+                        put(
+                            MediaStore.MediaColumns.DISPLAY_NAME,
+                            "${System.currentTimeMillis()}_ddiary.raw"
+                        )
+                        put(MediaStore.MediaColumns.MIME_TYPE, "audio/*")
+                        put(
+                            MediaStore.MediaColumns.RELATIVE_PATH,
+                            "${Environment.DIRECTORY_DOCUMENTS}/ddiary"
+                        )
+                    }
 
-            mediaRecorder?.setOutputFile(output)
+                    val resolver = requireContext().contentResolver
+                    val collection =
+                        MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                    val item = resolver.insert(collection, values)
 
-            println(output)
+                    item?.let { uri ->
+                        val outputStream: OutputStream? = resolver.openOutputStream(uri)
+                        outputStream?.use { output ->
 
-            println("mediaRecorder: $mediaRecorder")
+                            while (isReading) {
+                                readCount = audioRecord!!.read(myBuffer, 0, myBufferSize)
+                                if (readCount > 0) {
+                                    try {
+                                        output.write(myBuffer, 0, readCount)
+                                    } catch (e: IOException) {
+                                        println("IOException")
+                                        e.printStackTrace()
+                                    }
 
-            try {
-                mediaRecorder?.prepare()
-                mediaRecorder?.start()
+                                    totalCount += readCount
+                                    Log.d(
+                                        TAG, "readCount = $readCount, totalCount = $totalCount"
+                                    )
+                                }
+                            }
+                        }
+                    }
 
-                //в случае успешного запуска записи меняем флаг записи на true и меняем значок на остановку записи
-                isRecording = true
-                binding.fabVoice.setImageResource(R.drawable.baseline_stop_24)
-                Toast.makeText(context, "Recording started!", Toast.LENGTH_SHORT).show()
+                } else {
+                    val outputFilePath =
+                        Environment.getExternalStorageDirectory().absolutePath + "/ddiary/${System.currentTimeMillis()}_ddiary.raw"
 
-            } catch (e: IllegalStateException) {
-                println("IllegalStateException")
-                e.printStackTrace()
-            } catch (e: IOException) {
-                println("IOException")
-                e.printStackTrace()
-            }
+                    Log.d(TAG, "file: $outputFilePath")
+                    val outputFile = File(outputFilePath)
+                    Log.d(TAG, "outputFile: $outputFile")
+                    val outputStream: FileOutputStream? = null
+                    try {
+                        val outputStream = FileOutputStream(outputFile)
+                        Log.d(TAG, "outputStream: $outputStream")
+                    } catch (e: IOException) {
+                        println("IOException")
+                        e.printStackTrace()
+                    }
+
+                    while (isReading) {
+                        readCount = audioRecord!!.read(myBuffer, 0, myBufferSize)
+                        if (readCount > 0) {
+                            try {
+                                outputStream?.write(myBuffer, 0, readCount)
+                            } catch (e: IOException) {
+                                println("IOException")
+                                e.printStackTrace()
+                            }
+
+                            totalCount += readCount
+                            Log.d(
+                                TAG, "readCount = " + readCount + ", totalCount = "
+                                        + totalCount
+                            )
+                        }
+                    }
+                }
+
+
+            }).start()
+
+            audioRecord?.startRecording()
+            Log.d(TAG, "recordingState = ${audioRecord?.recordingState}")
+            isReading = true
+            binding.fabVoice.setImageResource(R.drawable.baseline_stop_24)
 
             true
         } else {
-            println("микрофона в системе нет!!!")
+            Log.d(TAG, "микрофона в системе нет!!!")
             false
         }
     }
 
     private fun recordStop() {
-        mediaRecorder?.stop()
-        mediaRecorder?.release()
-
+        Log.d(TAG, "record stop")
         //при нажатии на остановку записи меняем флаг записи на false, а также меняем значок на запись звука
-        isRecording = false
+        isReading = false
+        audioRecord?.stop()
         binding.fabVoice.setImageResource(R.drawable.baseline_keyboard_voice_24)
-
     }
 
     private fun checkAndRequestPermissions(): Boolean {
+        Log.d(TAG, "Функция: checkAndRequestPermissions()")
         val permissions = mutableListOf<String>()
 
         if (ContextCompat.checkSelfPermission(
@@ -186,15 +300,16 @@ class AudioJournalFragment : Fragment() {
         }
 
         if (permissions.isNotEmpty()) {
-            ActivityCompat.requestPermissions(
-                requireActivity(),
+            Log.d(TAG, "разрешений нет, ждем ответа от пользователя")
+
+            requestPermissions(
                 permissions.toTypedArray(),
                 RECORD_AUDIO_PERMISSION_CODE
             )
             return false
         } else {
-            // Уже есть все необходимые разрешения
-            //recordStart()
+            Log.d(TAG, "разрешения все есть")
+
             return true
         }
     }
@@ -207,23 +322,50 @@ class AudioJournalFragment : Fragment() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
 
         if (requestCode == RECORD_AUDIO_PERMISSION_CODE || requestCode == WRITE_EXTERNAL_STORAGE_PERMISSION_CODE) {
-            if (grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
-                // Все разрешения предоставлены
-                //recordStart()
+            Log.d(TAG, "grantResults: ${grantResults.joinToString()}")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                if (grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    //Разрешение на запись аудио предоставлено
+                    Log.d(TAG, "onRequestPermissionsResult: Все разрешения предоставлены")
+
+                    createAudioRecorder()
+                } else {
+                    Log.d(TAG, "onRequestPermissionsResult: разрешения не предоставлены")
+
+                    // Разрешения не были предоставлены
+                    Toast.makeText(
+                        requireContext(),
+                        "Для записи аудио сообщений дайте разрешения на запись аудио",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
             } else {
-                // Разрешения не были предоставлены
-                Toast.makeText(
-                    requireContext(),
-                    "Для записи аудио сообщений дайте разрешения на запись аудио и запись файла",
-                    Toast.LENGTH_SHORT
-                ).show()
+                if (grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+                    // Все разрешения предоставлены
+                    Log.d(TAG, "onRequestPermissionsResult: Все разрешения предоставлены")
+
+                    createAudioRecorder()
+
+                } else {
+                    Log.d(TAG, "onRequestPermissionsResult: разрешения не предоставлены")
+
+                    // Разрешения не были предоставлены
+                    Toast.makeText(
+                        requireContext(),
+                        "Для записи аудио сообщений дайте разрешения на запись аудио и запись файла",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+
             }
         }
     }
 
     override fun onDestroyView() {
-        _binding = null
-        mediaRecorder = null
+        isReading = false
+        if (audioRecord != null) {
+            audioRecord!!.release()
+        }
         super.onDestroyView()
     }
 
