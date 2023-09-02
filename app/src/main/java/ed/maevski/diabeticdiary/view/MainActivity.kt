@@ -1,10 +1,12 @@
 package ed.maevski.diabeticdiary.view
 
+import android.annotation.SuppressLint
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import androidx.fragment.app.Fragment
 import ed.maevski.diabeticdiary.R
 import ed.maevski.diabeticdiary.databinding.ActivityMainBinding
+import ed.maevski.diabeticdiary.view.fragments.AudioJournalFragment
 import ed.maevski.diabeticdiary.view.fragments.BloodSugarLevelsFragment
 import ed.maevski.diabeticdiary.view.fragments.FoodFragment
 import ed.maevski.diabeticdiary.view.fragments.SettingsFragment
@@ -19,7 +21,7 @@ class MainActivity : AppCompatActivity() {
 
         supportFragmentManager
             .beginTransaction()
-            .add(R.id.fragment_placeholder, BloodSugarLevelsFragment())
+            .add(R.id.fragment_placeholder, AudioJournalFragment())
             .addToBackStack(null)
             .commit()
         initMenu()
@@ -37,6 +39,8 @@ class MainActivity : AppCompatActivity() {
         supportFragmentManager.findFragmentByTag(tag)
 
     private fun initMenu() {
+        binding.bottomNavigation.selectedItemId = R.id.audio_journal
+
         binding.bottomNavigation.setOnItemSelectedListener {
 
             when (it.itemId) {
@@ -52,6 +56,14 @@ class MainActivity : AppCompatActivity() {
                         val tag = "food"
                         val fragment = checkFragmentExistence(tag)
                         changeFragment(fragment ?: FoodFragment(), tag)
+
+                    true
+                }
+
+                R.id.audio_journal -> {
+                    val tag = "audio_journal"
+                    val fragment = checkFragmentExistence(tag)
+                    changeFragment(fragment ?: AudioJournalFragment(), tag)
 
                     true
                 }

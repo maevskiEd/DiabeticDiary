@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">DiabeticDiary</string>
+    <string name="fab_description">Записать аудиосообщение</string>
 </resources>

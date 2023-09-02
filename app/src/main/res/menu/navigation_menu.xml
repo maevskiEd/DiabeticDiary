@@ -11,6 +11,11 @@
         android:title="еда"
         app:showAsAction="withText" />
     <item
+        android:id="@+id/audio_journal"
+        android:icon="@drawable/baseline_audio_file_24"
+        android:title="аудио-журнал"
+        app:showAsAction="withText" />
+    <item
         android:id="@+id/settings"
         android:icon="@drawable/baseline_settings_24"
         android:title="настройка"
