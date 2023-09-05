@@ -1,8 +1,8 @@
 package ed.maevski.diabeticdiary.view
 
-import android.annotation.SuppressLint
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
+import androidx.activity.viewModels
 import androidx.fragment.app.Fragment
 import ed.maevski.diabeticdiary.R
 import ed.maevski.diabeticdiary.databinding.ActivityMainBinding
@@ -10,9 +10,12 @@ import ed.maevski.diabeticdiary.view.fragments.AudioJournalFragment
 import ed.maevski.diabeticdiary.view.fragments.BloodSugarLevelsFragment
 import ed.maevski.diabeticdiary.view.fragments.FoodFragment
 import ed.maevski.diabeticdiary.view.fragments.SettingsFragment
+import ed.maevski.diabeticdiary.viewmodel.MainActivityViewModel
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
+
+    val mainActivityViewModel: MainActivityViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

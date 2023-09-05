@@ -18,10 +18,14 @@ import android.view.ViewGroup
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.viewModels
 import ed.maevski.diabeticdiary.R
 import ed.maevski.diabeticdiary.data.entity.Audiofile
+import ed.maevski.diabeticdiary.data.entity.Audiofile.AudioFileConst.CREATED_AUDIOFILE
+import ed.maevski.diabeticdiary.data.entity.Audiofile.AudioFileConst.CREATE_AUDIOFILE
 import ed.maevski.diabeticdiary.databinding.FragmentAudioJournalBinding
 import ed.maevski.diabeticdiary.view.rv_adapters.AudioJournalRecyclerAdapter
+import ed.maevski.diabeticdiary.viewmodel.AudioJournalFragmentViewModel
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -31,10 +35,10 @@ class AudioJournalFragment : Fragment() {
     private var _binding: FragmentAudioJournalBinding? = null
     private val binding get() = _binding!!
 
+    private val audioJournalFragment: AudioJournalFragmentViewModel by viewModels()
+
     val TAG = "myLogs"
 
-    var myBufferSize = 8192
-    var audioRecord: AudioRecord? = null
     var isReading = false
 
     override fun onCreateView(
@@ -55,7 +59,7 @@ class AudioJournalFragment : Fragment() {
         binding.audioJournalRecycler.adapter = adapter
 
         //Проверяем разрешение на запись аудио, на запись файла и запрашываем разршение у пользователя
-        if (checkAndRequestPermissions()) createAudioRecorder()
+        if (checkAndRequestPermissions()) audioJournalFragment.createAudioRecorder()
 
         binding.fabVoice.setOnClickListener {
             if (isReading) {
@@ -83,13 +87,14 @@ class AudioJournalFragment : Fragment() {
         val documentsDirectory =
             Environment.getExternalStoragePublicDirectory("${Environment.DIRECTORY_DOCUMENTS}/ddiary")
 
-        val audioFiles = documentsDirectory.listFiles { file -> file.isFile  && file.name.endsWith(".raw")}
+        val audioFiles =
+            documentsDirectory.listFiles { file -> file.isFile && file.name.endsWith(".raw") }
 
         Log.d(TAG, "audioFiles: ${audioFiles?.joinToString()}")
         Log.d(TAG, "audioFiles.size: ${audioFiles?.size}")
 
         val audioFileList = audioFiles?.map { file ->
-            Audiofile(file.name, file.absolutePath)
+            Audiofile(file.name, file.absolutePath, CREATED_AUDIOFILE)
         }
 
         Log.d(TAG, "audioFileList: ${audioFileList?.joinToString()}")
@@ -136,7 +141,7 @@ class AudioJournalFragment : Fragment() {
             return audiofiles
         }*/
 
-    @SuppressLint("MissingPermission")
+/*    @SuppressLint("MissingPermission")
     fun createAudioRecorder() {
         Log.d(TAG, "Функция: createAudioRecorder()")
 
@@ -165,7 +170,7 @@ class AudioJournalFragment : Fragment() {
             )
             .setBufferSizeInBytes(internalBufferSize)
             .build()
-    }
+    }*/
 
     private fun recordStart(): Boolean {
         Log.d(TAG, "record start")
@@ -175,8 +180,8 @@ class AudioJournalFragment : Fragment() {
             Log.d(TAG, "микрофон есть в системе.")
 
             Thread(Runnable {
-                if (audioRecord == null) return@Runnable
-                val myBuffer = ByteArray(myBufferSize)
+                if (audioJournalFragment.audioRecord == null) return@Runnable
+                val myBuffer = ByteArray(audioJournalFragment.myBufferSize)
                 var readCount = 0
                 var totalCount = 0
 
@@ -198,12 +203,26 @@ class AudioJournalFragment : Fragment() {
                         MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
                     val item = resolver.insert(collection, values)
 
+                    val audioFile = Audiofile(
+                        values.getAsString(MediaStore.MediaColumns.DISPLAY_NAME),
+                        values.getAsString(MediaStore.MediaColumns.RELATIVE_PATH),
+                        CREATE_AUDIOFILE
+                    )
+
+                    Log.d(TAG, "file: ${audioFile}")
+
+                    try {
+                        audioJournalFragment.putRowAudioFileToDB(audioFile)
+                    } catch (e: Exception) {
+                        Log.d(TAG, "Словили исключение при записи данных")
+                    }
+
                     item?.let { uri ->
                         val outputStream: OutputStream? = resolver.openOutputStream(uri)
                         outputStream?.use { output ->
 
                             while (isReading) {
-                                readCount = audioRecord!!.read(myBuffer, 0, myBufferSize)
+                                readCount = audioJournalFragment.audioRecord!!.read(myBuffer, 0, audioJournalFragment.myBufferSize)
                                 if (readCount > 0) {
                                     try {
                                         output.write(myBuffer, 0, readCount)
@@ -219,6 +238,8 @@ class AudioJournalFragment : Fragment() {
                                 }
                             }
                         }
+
+
                     }
 
                 } else {
@@ -238,7 +259,7 @@ class AudioJournalFragment : Fragment() {
                     }
 
                     while (isReading) {
-                        readCount = audioRecord!!.read(myBuffer, 0, myBufferSize)
+                        readCount = audioJournalFragment.audioRecord!!.read(myBuffer, 0, audioJournalFragment.myBufferSize)
                         if (readCount > 0) {
                             try {
                                 outputStream?.write(myBuffer, 0, readCount)
@@ -259,8 +280,8 @@ class AudioJournalFragment : Fragment() {
 
             }).start()
 
-            audioRecord?.startRecording()
-            Log.d(TAG, "recordingState = ${audioRecord?.recordingState}")
+            audioJournalFragment.audioRecord?.startRecording()
+            Log.d(TAG, "recordingState = ${audioJournalFragment.audioRecord?.recordingState}")
             isReading = true
             binding.fabVoice.setImageResource(R.drawable.baseline_stop_24)
 
@@ -275,7 +296,7 @@ class AudioJournalFragment : Fragment() {
         Log.d(TAG, "record stop")
         //при нажатии на остановку записи меняем флаг записи на false, а также меняем значок на запись звука
         isReading = false
-        audioRecord?.stop()
+        audioJournalFragment.audioRecord?.stop()
         binding.fabVoice.setImageResource(R.drawable.baseline_keyboard_voice_24)
     }
 
@@ -328,7 +349,7 @@ class AudioJournalFragment : Fragment() {
                     //Разрешение на запись аудио предоставлено
                     Log.d(TAG, "onRequestPermissionsResult: Все разрешения предоставлены")
 
-                    createAudioRecorder()
+                    audioJournalFragment.createAudioRecorder()
                 } else {
                     Log.d(TAG, "onRequestPermissionsResult: разрешения не предоставлены")
 
@@ -344,7 +365,7 @@ class AudioJournalFragment : Fragment() {
                     // Все разрешения предоставлены
                     Log.d(TAG, "onRequestPermissionsResult: Все разрешения предоставлены")
 
-                    createAudioRecorder()
+                    audioJournalFragment.createAudioRecorder()
 
                 } else {
                     Log.d(TAG, "onRequestPermissionsResult: разрешения не предоставлены")
@@ -363,8 +384,8 @@ class AudioJournalFragment : Fragment() {
 
     override fun onDestroyView() {
         isReading = false
-        if (audioRecord != null) {
-            audioRecord!!.release()
+        if (audioJournalFragment.audioRecord != null) {
+            audioJournalFragment.audioRecord!!.release()
         }
         super.onDestroyView()
     }

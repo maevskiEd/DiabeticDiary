@@ -3,6 +3,9 @@ package ed.maevski.diabeticdiary
 import android.app.Application
 import ed.maevski.diabeticdiary.di.AppComponent
 import ed.maevski.diabeticdiary.di.DaggerAppComponent
+import ed.maevski.diabeticdiary.di.modules.DatabaseModule
+import ed.maevski.diabeticdiary.di.modules.DomainModule
+import ed.maevski.diabeticdiary.di.modules.RemoteModule
 
 class App : Application() {
     lateinit var dagger: AppComponent
@@ -12,6 +15,11 @@ class App : Application() {
 
         instance = this
 
+        dagger = DaggerAppComponent.builder()
+            .remoteModule(RemoteModule())
+            .databaseModule(DatabaseModule())
+            .domainModule(DomainModule(this))
+            .build()
     }
 
     companion object {

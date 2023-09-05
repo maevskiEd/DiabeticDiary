@@ -37,6 +37,10 @@ class RemoteModule {
         .client(okHttpClient)
         .build()
 
+    @Provides
+    @Singleton
+    fun provideTmdbApi(retrofit: Retrofit): YandexApi = retrofit.create(YandexApi::class.java)
+
     companion object {
         private const val HALF_MINUTE_FOR_SLOW_INTERNET = 30L
     }
