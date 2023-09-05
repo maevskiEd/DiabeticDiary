@@ -1,12 +1,8 @@
 package ed.maevski.diabeticdiary.view.fragments
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.content.ContentValues
 import android.content.pm.PackageManager
-import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.MediaRecorder
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -19,6 +15,7 @@ import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
+import androidx.lifecycle.lifecycleScope
 import ed.maevski.diabeticdiary.R
 import ed.maevski.diabeticdiary.data.entity.Audiofile
 import ed.maevski.diabeticdiary.data.entity.Audiofile.AudioFileConst.CREATED_AUDIOFILE
@@ -36,10 +33,9 @@ class AudioJournalFragment : Fragment() {
     private val binding get() = _binding!!
 
     private val audioJournalFragment: AudioJournalFragmentViewModel by viewModels()
-
     val TAG = "myLogs"
-
     var isReading = false
+    val scope = viewLifecycleOwner.lifecycleScope
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
