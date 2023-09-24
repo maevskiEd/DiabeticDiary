@@ -71,4 +71,6 @@ dependencies {
 
     //ViewModel
     implementation "androidx.fragment:fragment-ktx:1.6.1"
+
+    implementation("aws.sdk.kotlin:s3:0.32.0-beta")
 }

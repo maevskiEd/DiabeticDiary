@@ -15,14 +15,21 @@ import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
+import androidx.lifecycle.LifecycleCoroutineScope
 import androidx.lifecycle.lifecycleScope
 import ed.maevski.diabeticdiary.R
+import ed.maevski.diabeticdiary.audio.DDAudioRecorder
 import ed.maevski.diabeticdiary.data.entity.Audiofile
 import ed.maevski.diabeticdiary.data.entity.Audiofile.AudioFileConst.CREATED_AUDIOFILE
 import ed.maevski.diabeticdiary.data.entity.Audiofile.AudioFileConst.CREATE_AUDIOFILE
 import ed.maevski.diabeticdiary.databinding.FragmentAudioJournalBinding
 import ed.maevski.diabeticdiary.view.rv_adapters.AudioJournalRecyclerAdapter
 import ed.maevski.diabeticdiary.viewmodel.AudioJournalFragmentViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -32,21 +39,29 @@ class AudioJournalFragment : Fragment() {
     private var _binding: FragmentAudioJournalBinding? = null
     private val binding get() = _binding!!
 
-    private val audioJournalFragment: AudioJournalFragmentViewModel by viewModels()
+    private val audioJournalFragmentViewModel: AudioJournalFragmentViewModel by viewModels()
     val TAG = "myLogs"
-    var isReading = false
-    val scope = viewLifecycleOwner.lifecycleScope
+    private lateinit var scope: LifecycleCoroutineScope
+
+    private var audioRecorder: DDAudioRecorder? = null
+
+    val channel = Channel<Pair<String, String>>()
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View? {
+        Log.d(TAG, "onCreateView!!!")
+
         _binding = FragmentAudioJournalBinding.inflate(inflater, container, false)
         return binding.root
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        Log.d(TAG, "onViewCreated!!!")
+
+        scope = viewLifecycleOwner.lifecycleScope
 
         //Получаем список при транзакции фрагмента
         val adapter = AudioJournalRecyclerAdapter()
@@ -55,26 +70,69 @@ class AudioJournalFragment : Fragment() {
         binding.audioJournalRecycler.adapter = adapter
 
         //Проверяем разрешение на запись аудио, на запись файла и запрашываем разршение у пользователя
-        if (checkAndRequestPermissions()) audioJournalFragment.createAudioRecorder()
+        if (checkAndRequestPermissions()) {
+            audioRecorder = DDAudioRecorder.getInstance()
+        }
+
+        scope.launch {
+            for (element in audioJournalFragmentViewModel.isRecordingChannel) {
+                if (element) {
+                    binding.fabVoice.setImageResource(R.drawable.baseline_stop_24)
+                    binding.fabVoice.tag = FAB_TAG_STOP
+                } else {
+                    binding.fabVoice.setImageResource(R.drawable.baseline_keyboard_voice_24)
+                    binding.fabVoice.tag = FAB_TAG_START
+                }
+            }
+        }
 
         binding.fabVoice.setOnClickListener {
-            if (isReading) {
-                // Остановка записи
-                Log.d(TAG, "Остановка записи")
+            val tagValue = binding.fabVoice.tag as? String
 
-                recordStop()
-            } else {
-                // Начало записи
+            when (tagValue) {
+                FAB_TAG_START -> {
+                    //Проверяем на наличие микрофона, если он сломан то разрешения можно не спрашивать
+                    //и записывать нам нечего
+                    if (context?.packageManager?.hasSystemFeature(PackageManager.FEATURE_MICROPHONE) == false) {
+                        Log.d(TAG, "Отсутствует микрофон в устройстве")
+                        return@setOnClickListener
+                    }
 
-                //Еще раз проверяем разрешения. Вдруг пользователь при открытии фрагмента не предоставил все разрешения.
-                if (!checkAndRequestPermissions()) {
-                    //Если нет, то выходим из слушателя
-                    Log.d(TAG, "Если нет, то запрашиваем и выходим из метода")
-                    return@setOnClickListener
+                    Log.d(TAG, "Начинаем запись звука")
+
+                    //Еще раз проверяем разрешения. Вдруг пользователь при открытии фрагмента не предоставил все разрешения.
+                    if (!checkAndRequestPermissions()) {
+                        //Если нет, то выходим из слушателя
+                        Log.d(TAG, "Если нет, то запрашиваем и выходим из метода")
+                        return@setOnClickListener
+                    }
+
+                    // Выполните логику для "start"
+                    // Например, начать запись
+                    binding.fabVoice.setImageResource(R.drawable.baseline_stop_24)
+                    binding.fabVoice.tag = FAB_TAG_STOP
+
+                    audioJournalFragmentViewModel.startRecording()
+                    audioRecorder?.startRecording(requireContext())
                 }
 
-                Log.d(TAG, "Начинаем запись звука")
-                recordStart()
+                FAB_TAG_STOP -> {
+                    Log.d(TAG, "Остановка записи")
+                    // Выполните логику для "stop"
+                    // Например, остановить запись
+                    binding.fabVoice.setImageResource(R.drawable.baseline_keyboard_voice_24)
+                    binding.fabVoice.tag = FAB_TAG_START
+
+                    audioJournalFragmentViewModel.stopRecording()
+
+                }
+
+                else -> {
+                    // Если значение tag не является "start" или "stop", выполните действия по умолчанию
+
+                    Log.d(TAG, "В tag записалось непонятно что: $tagValue")
+
+                }
             }
         }
     }
@@ -137,37 +195,6 @@ class AudioJournalFragment : Fragment() {
             return audiofiles
         }*/
 
-/*    @SuppressLint("MissingPermission")
-    fun createAudioRecorder() {
-        Log.d(TAG, "Функция: createAudioRecorder()")
-
-        val sampleRate = 8000
-        val channelConfig = AudioFormat.CHANNEL_IN_MONO
-        val audioFormat = AudioFormat.ENCODING_PCM_16BIT
-        val minInternalBufferSize = AudioRecord.getMinBufferSize(
-            sampleRate,
-            channelConfig, audioFormat
-        )
-        val internalBufferSize = minInternalBufferSize * 4
-        Log.d(
-            TAG, "minInternalBufferSize = " + minInternalBufferSize
-                    + ", internalBufferSize = " + internalBufferSize
-                    + ", myBufferSize = " + myBufferSize
-        )
-
-        audioRecord = AudioRecord.Builder()
-            .setAudioSource(MediaRecorder.AudioSource.MIC)
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .setSampleRate(48000)
-                    .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                    .build()
-            )
-            .setBufferSizeInBytes(internalBufferSize)
-            .build()
-    }*/
-
     private fun recordStart(): Boolean {
         Log.d(TAG, "record start")
 
@@ -175,17 +202,20 @@ class AudioJournalFragment : Fragment() {
         return if (context?.packageManager?.hasSystemFeature(PackageManager.FEATURE_MICROPHONE) == true) {
             Log.d(TAG, "микрофон есть в системе.")
 
-            Thread(Runnable {
-                if (audioJournalFragment.audioRecord == null) return@Runnable
-                val myBuffer = ByteArray(audioJournalFragment.myBufferSize)
+            scope.launch(Dispatchers.Default) {
+                if (audioJournalFragmentViewModel.audioRecord == null) return@launch
+                val myBuffer = ByteArray(audioJournalFragmentViewModel.myBufferSize)
                 var readCount = 0
                 var totalCount = 0
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val resolver = requireContext().contentResolver
+                    val collection =
+                        MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                    val _displayName = "${System.currentTimeMillis()}_ddiary.raw"
                     val values = ContentValues().apply {
                         put(
-                            MediaStore.MediaColumns.DISPLAY_NAME,
-                            "${System.currentTimeMillis()}_ddiary.raw"
+                            MediaStore.MediaColumns.DISPLAY_NAME, _displayName
                         )
                         put(MediaStore.MediaColumns.MIME_TYPE, "audio/*")
                         put(
@@ -194,9 +224,6 @@ class AudioJournalFragment : Fragment() {
                         )
                     }
 
-                    val resolver = requireContext().contentResolver
-                    val collection =
-                        MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
                     val item = resolver.insert(collection, values)
 
                     val audioFile = Audiofile(
@@ -207,36 +234,96 @@ class AudioJournalFragment : Fragment() {
 
                     Log.d(TAG, "file: ${audioFile}")
 
-                    try {
-                        audioJournalFragment.putRowAudioFileToDB(audioFile)
-                    } catch (e: Exception) {
-                        Log.d(TAG, "Словили исключение при записи данных")
-                    }
+                    //Делаем запись в базу данных с именем созданного файла
+                    audioJournalFragmentViewModel.putRowAudioFileToDB(audioFile)
+                    /*                    launch(Dispatchers.IO) {
+                                            try {
+                                                audioJournalFragment.putRowAudioFileToDB(audioFile)
+                                            } catch (e: Exception) {
+                                                Log.d(TAG, "Словили исключение при записи данных")
+                                            }
+                                        }*/
 
-                    item?.let { uri ->
-                        val outputStream: OutputStream? = resolver.openOutputStream(uri)
-                        outputStream?.use { output ->
+                    //Пишем звук в файл
+                    launch(Dispatchers.IO) {
+                        item?.let { uri ->
+                            val outputStream: OutputStream? = resolver.openOutputStream(uri)
+                            outputStream?.use { output ->
 
-                            while (isReading) {
-                                readCount = audioJournalFragment.audioRecord!!.read(myBuffer, 0, audioJournalFragment.myBufferSize)
-                                if (readCount > 0) {
-                                    try {
-                                        output.write(myBuffer, 0, readCount)
-                                    } catch (e: IOException) {
-                                        println("IOException")
-                                        e.printStackTrace()
-                                    }
-
-                                    totalCount += readCount
-                                    Log.d(
-                                        TAG, "readCount = $readCount, totalCount = $totalCount"
+                                while (isReading) {
+                                    readCount = audioJournalFragmentViewModel.audioRecord!!.read(
+                                        myBuffer,
+                                        0,
+                                        audioJournalFragmentViewModel.myBufferSize
                                     )
+                                    if (readCount > 0) {
+                                        try {
+                                            output.write(myBuffer, 0, readCount)
+                                        } catch (e: IOException) {
+                                            println("IOException")
+                                            e.printStackTrace()
+                                        }
+
+                                        totalCount += readCount
+                                        Log.d(
+                                            TAG, "readCount = $readCount, totalCount = $totalCount"
+                                        )
+                                    }
                                 }
                             }
+
+
                         }
+                    }.join()
+                    delay(2000)
 
 
+                    //Ждем завершения записи аудио, 3 сек и пробуем отправить файл на сервер
+                    async {
+                        val selection = "${MediaStore.MediaColumns.DISPLAY_NAME} = ?"
+                        val selectionArgs = arrayOf(_displayName)
+                        val projection = arrayOf(
+                            MediaStore.MediaColumns.IS_PENDING,
+                            MediaStore.MediaColumns.DATA
+                        )
+                        val cursor =
+                            resolver.query(collection, projection, selection, selectionArgs, null)
+
+                        if ((cursor != null) && cursor.moveToFirst()) {
+                            val isPending =
+                                cursor.getInt(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.IS_PENDING))
+                            val _path =
+                                cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA))
+                            cursor.close()
+
+                            if (isPending == 0) {
+                                Log.d(
+                                    TAG,
+                                    "Файл существует и не открыт на запись, пробуем кинуть его на сервер"
+                                )
+                                Log.d(
+                                    TAG, "путь: $_path"
+                                )
+                                // Файл существует и не открыт на запись
+                                // Вы можете выполнить нужные действия здесь
+                                true
+                            } else {
+                                Log.d(
+                                    TAG, "Файл существует, но открыт на запись"
+                                )
+                                // Файл существует, но открыт на запись
+                                // Можно выполнить необходимые действия, например, вывести сообщение об ошибке
+                                false
+                            }
+                        } else {
+                            Log.d(
+                                TAG, "Файл не существует в MediaStore"
+                            )
+                            // Файл не существует в MediaStore
+                            false
+                        }
                     }
+
 
                 } else {
                     val outputFilePath =
@@ -255,7 +342,11 @@ class AudioJournalFragment : Fragment() {
                     }
 
                     while (isReading) {
-                        readCount = audioJournalFragment.audioRecord!!.read(myBuffer, 0, audioJournalFragment.myBufferSize)
+                        readCount = audioJournalFragmentViewModel.audioRecord!!.read(
+                            myBuffer,
+                            0,
+                            audioJournalFragmentViewModel.myBufferSize
+                        )
                         if (readCount > 0) {
                             try {
                                 outputStream?.write(myBuffer, 0, readCount)
@@ -272,12 +363,13 @@ class AudioJournalFragment : Fragment() {
                         }
                     }
                 }
+            }
 
-
-            }).start()
-
-            audioJournalFragment.audioRecord?.startRecording()
-            Log.d(TAG, "recordingState = ${audioJournalFragment.audioRecord?.recordingState}")
+            audioJournalFragmentViewModel.audioRecord?.startRecording()
+            Log.d(
+                TAG,
+                "recordingState = ${audioJournalFragmentViewModel.audioRecord?.recordingState}"
+            )
             isReading = true
             binding.fabVoice.setImageResource(R.drawable.baseline_stop_24)
 
@@ -292,7 +384,7 @@ class AudioJournalFragment : Fragment() {
         Log.d(TAG, "record stop")
         //при нажатии на остановку записи меняем флаг записи на false, а также меняем значок на запись звука
         isReading = false
-        audioJournalFragment.audioRecord?.stop()
+        audioJournalFragmentViewModel.audioRecord?.stop()
         binding.fabVoice.setImageResource(R.drawable.baseline_keyboard_voice_24)
     }
 
@@ -345,7 +437,7 @@ class AudioJournalFragment : Fragment() {
                     //Разрешение на запись аудио предоставлено
                     Log.d(TAG, "onRequestPermissionsResult: Все разрешения предоставлены")
 
-                    audioJournalFragment.createAudioRecorder()
+                    audioRecorder = DDAudioRecorder.getInstance()
                 } else {
                     Log.d(TAG, "onRequestPermissionsResult: разрешения не предоставлены")
 
@@ -361,7 +453,7 @@ class AudioJournalFragment : Fragment() {
                     // Все разрешения предоставлены
                     Log.d(TAG, "onRequestPermissionsResult: Все разрешения предоставлены")
 
-                    audioJournalFragment.createAudioRecorder()
+                    audioRecorder = DDAudioRecorder.getInstance()
 
                 } else {
                     Log.d(TAG, "onRequestPermissionsResult: разрешения не предоставлены")
@@ -379,15 +471,15 @@ class AudioJournalFragment : Fragment() {
     }
 
     override fun onDestroyView() {
-        isReading = false
-        if (audioJournalFragment.audioRecord != null) {
-            audioJournalFragment.audioRecord!!.release()
-        }
+        audioRecorder?.release()
+
         super.onDestroyView()
     }
 
     companion object {
         private val RECORD_AUDIO_PERMISSION_CODE = 123
         private val WRITE_EXTERNAL_STORAGE_PERMISSION_CODE = 124
+        private val FAB_TAG_START = "START"
+        private val FAB_TAG_STOP = "STOP"
     }
 }
